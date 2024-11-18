@@ -1,4 +1,3 @@
-# src/core/reader.py
 import os
 from pathlib import Path
 from typing import List, Dict, Union, Optional
