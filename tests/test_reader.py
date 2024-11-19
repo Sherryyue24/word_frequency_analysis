@@ -8,7 +8,7 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from src.core.reader import TextReader
+from src.core.file_reader import TextReader
 
 def test_txt_reader():
     reader = TextReader()

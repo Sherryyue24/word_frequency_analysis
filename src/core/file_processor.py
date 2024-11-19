@@ -1,10 +1,11 @@
 from pathlib import Path
 from datetime import datetime
-from .analyzer import analyze_text
-from .reader import TextReader
-from .data import StorageManager
+from .word_analyzer import analyze_text
+from .file_reader import TextReader
+from .database import StorageManager
 from ..utils.helpers import get_supported_files
 import os
+import time
 
 class TextProcessor:
     """负责处理新文本文件的类"""
@@ -21,7 +22,7 @@ class TextProcessor:
                 return
                 
             self._process_files(file_paths, directory_path)
-            #self._update_word_stats()
+            self._update_word_stats() #更新词频
             
         except Exception as e:
             print(f"处理文本时发生错误: {str(e)}")
@@ -61,26 +62,36 @@ class TextProcessor:
         cached_result = self.storage_manager.get_existing_analysis(content_hash)
         if cached_result:
             print("找到缓存的分析结果")
+            # 更新时间戳
+            if self.storage_manager.update_analysis_timestamp(content_hash):
+                print("已更新访问时间戳")
             return cached_result, content_hash
         
         # 新分析
         print("没有缓存，进行分析")
+        start_time = time.time()  # 开始计时
+        
         basic_info, word_frequencies = analyze_text(text, self.reader)
+        
+        # 计算处理时长（秒）
+        process_duration = time.time() - start_time
         
         # 获取文件元数据
         metadata = self.reader.get_metadata()
         basic_info.update(metadata)
         basic_info['filename'] = Path(file_path).name
         basic_info['analysis_date'] = datetime.now().isoformat()
+        basic_info['process_duration'] = process_duration  # 添加处理时长到基本信息中
         
         self.storage_manager.store_analysis(
             content_hash=content_hash,
             filename=basic_info['filename'],
             basic_info=basic_info,
-            word_frequencies=word_frequencies
+            word_frequencies=word_frequencies,
+            process_duration=process_duration
         )
         
-        print("分析完成并保存到数据库")
+        print(f"分析完成并保存到数据库，处理时长：{process_duration:.4f}秒")
         return (basic_info, word_frequencies), content_hash
 
     def _update_word_stats(self):
