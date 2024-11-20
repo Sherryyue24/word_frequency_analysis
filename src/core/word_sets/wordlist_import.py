@@ -1,7 +1,7 @@
 import sqlite3
 from src.core.vocabulary_database import VocabularyDatabase
 
-def parse_wordlist_data(first_column):
+def parse_txt_data(first_column):
     """解析AWL单词列表并返回结构化数据"""
     words_data = []
     
@@ -21,7 +21,7 @@ def parse_wordlist_data(first_column):
 
 def import_wordlist_to_database(db, first_column):
     """将AWL数据导入到现有数据库"""
-    words_data = parse_wordlist_data(first_column)
+    words_data = parse_txt_data(first_column)
     
     with sqlite3.connect(db.db_path) as conn:
         try:

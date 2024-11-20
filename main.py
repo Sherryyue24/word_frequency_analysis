@@ -5,8 +5,8 @@ from src.core.file_reader import TextReader
 from src.core.analysis_database import StorageManager
 from src.core.file_processor import TextProcessor
 from datetime import datetime
-from src.core.word_sets.awl_import import  import_awl_to_database
-from src.core.word_sets.word_sets import import_wordlist_to_database
+from src.core.word_sets.awlpdf_import import  import_awl_to_database
+from src.core.word_sets.wordlist_import import import_wordlist_to_database
 from src.utils.helpers import print_analysis_results,get_supported_files
 from src.utils.file_operations import process_files
 from src.utils.db_operations import query_database,delete_logs
@@ -15,17 +15,11 @@ import os
 
 def main():
     
-
-    """从PDF内容导入AWL数据"""
     db = VocabularyDatabase()
     reader = TextReader()
     
-    
     try:
         # 读取txt文件
-        import pandas as pd
-
-        # 读取文件，指定分隔符为空格
         with open('/Users/yue/Documents/code/word-frequency-analysis/data/word_sets/AWL.txt', 'r') as file:
             wordlist = []
             for line in file:
@@ -39,7 +33,7 @@ def main():
         
         # 导入数据
         import_wordlist_to_database(db, wordlist)
-        print("AWL数据导入完成")
+        print("导入完成")
         
         # 输出一些统计信息
         metadata = reader.get_metadata()
