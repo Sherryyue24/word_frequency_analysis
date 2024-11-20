@@ -7,3 +7,7 @@ __pycache__/
 *.epub
 *.db
 *.txt
+*.xlsx
+*.csv
+*.docx
+.VSCodeCounter

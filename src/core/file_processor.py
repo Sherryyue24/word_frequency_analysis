@@ -2,7 +2,7 @@ from pathlib import Path
 from datetime import datetime
 from .word_analyzer import analyze_text
 from .file_reader import TextReader
-from .database import StorageManager
+from .analysis_database import StorageManager
 from ..utils.helpers import get_supported_files
 import os
 import time

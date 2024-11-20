@@ -1,9 +1,12 @@
 from pathlib import Path
+from src.core.vocabulary_database import VocabularyDatabase
 from src.core.word_analyzer import analyze_text
 from src.core.file_reader import TextReader
-from src.core.database import StorageManager
+from src.core.analysis_database import StorageManager
 from src.core.file_processor import TextProcessor
 from datetime import datetime
+from src.core.word_sets.awl_import import  import_awl_to_database
+from src.core.word_sets.word_sets import import_wordlist_to_database
 from src.utils.helpers import print_analysis_results,get_supported_files
 from src.utils.file_operations import process_files
 from src.utils.db_operations import query_database,delete_logs
@@ -11,6 +14,52 @@ import os
 
 
 def main():
+    
+
+    """从PDF内容导入AWL数据"""
+    db = VocabularyDatabase()
+    reader = TextReader()
+    
+    
+    try:
+        # 读取txt文件
+        import pandas as pd
+
+        # 读取文件，指定分隔符为空格
+        with open('/Users/yue/Documents/code/word-frequency-analysis/data/word_sets/AWL.txt', 'r') as file:
+            wordlist = []
+            for line in file:
+                if line.strip():
+                    word = line.split()[0]
+                    if not word.isdigit():
+                        wordlist.append(word)
+        #df = pd.read_csv('/Users/yue/Documents/code/word-frequency-analysis/data/word_sets/AWL.txt', delim_whitespace=True, header=None)
+        #wordlist = df[0][~df[0].str.match(r'^\d+$')].tolist()
+        print(wordlist)
+        
+        # 导入数据
+        import_wordlist_to_database(db, wordlist)
+        print("AWL数据导入完成")
+        
+        # 输出一些统计信息
+        metadata = reader.get_metadata()
+        print(f"文件大小: {metadata['file_size']} bytes")
+        print(f"总字符数: {metadata['char_count']}")
+        print(f"总词数: {metadata['word_count']}")
+        
+    except FileNotFoundError:
+        print("找不到文件")
+    except Exception as e:
+        print(f"导入过程出错: {e}")
+
+    lemmas = db.get_all_lemmas()
+    print("所有lemmas:", lemmas)
+
+
+
+'''
+def main():
+    
     # 初始化数据库并选择功能
     processor = TextProcessor()
     storage_manager = StorageManager()
@@ -48,6 +97,7 @@ def main():
 
         except Exception as e:
             print(f"操作失败: {str(e)}")
+'''
 
 if __name__ == "__main__":
     main()
