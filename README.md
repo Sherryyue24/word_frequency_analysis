@@ -20,8 +20,3 @@ A tool for analyzing text word frequency and vocabulary level.
 -[] GRE词汇表
 https://www.pu-kumamoto.ac.jp/users_site/rlavin/resources/wordlists/LongmanDefiningVocab.html
 
-
-## Data Sources
-The word lists data is sourced from:
-- Repository: [english-wordlists](https://github.com/mahavivo/english-wordlists)
-- Author: mahavivo

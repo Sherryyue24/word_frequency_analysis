@@ -1,18 +1,60 @@
-
 from pathlib import Path
 import sqlite3
 import traceback
 
 
+def clean_word(word):
+    """清理单词，去除特殊字符"""
+    if '*' in word:
+        word = word.replace('*', '')
+    return ''.join(c for c in word if c.isalpha())
+
+def save_import_report(output_file, stats, skipped_lines, existing_words):
+    """保存导入报告到文件"""
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write("=== 处理结果详情 ===\n")
+        
+        f.write("\n【跳过情况】\n")
+        f.write(f"空行数量: {len(skipped_lines['empty'])}\n")
+        f.write(f"标题行数量: {len(skipped_lines['title'])}\n")
+        f.write(f"无效单词数量: {len(skipped_lines['invalid'])}\n")
+        f.write(f"格式错误数量: {len(skipped_lines['format_error'])}\n")
+        f.write(f"已有标签数量: {len(skipped_lines['already_tagged'])}\n")
+        f.write(f"数据库错误数量: {len(skipped_lines['db_error'])}\n")
+        
+        f.write("\n【导入情况】\n")
+        f.write(f"新增单词: {stats['added_count']}\n")
+        f.write(f"已存在单词(已添加新标签): {len(existing_words)}\n")
+        
+        # 详细信息
+        if skipped_lines['invalid']:
+            f.write("\n无效单词详情:\n")
+            for line_num, line in skipped_lines['invalid']:
+                f.write(f"第 {line_num} 行: {line}\n")
+        
+        if skipped_lines['format_error']:
+            f.write("\n格式错误详情:\n")
+            for line_num, line, error in skipped_lines['format_error']:
+                f.write(f"第 {line_num} 行: {line}\n")
+                f.write(f"错误信息: {error}\n")
+        
+        if skipped_lines['already_tagged']:
+            f.write("\n已有标签的单词:\n")
+            for line_num, word in skipped_lines['already_tagged']:
+                f.write(f"第 {line_num} 行: {word}\n")
+        
+        if skipped_lines['db_error']:
+            f.write("\n数据库操作失败详情:\n")
+            for line_num, word, error in skipped_lines['db_error']:
+                f.write(f"第 {line_num} 行 '{word}' - 错误: {error}\n")
+        
+        if existing_words:
+            f.write(f"\n已存在的单词(已添加新标签):\n")
+            for word in existing_words:
+                f.write(f"- {word}\n")
+
 def import_wordlist_to_database(db, filepath):
-    """
-    从文件导入词表到数据库
-    Args:
-        db: 数据库实例
-        filepath: 文件路径
-    Returns:
-        bool: 导入是否成功
-    """
+    """从文件导入词表到数据库"""
     try:
         # 获取文件名作为标签
         tag_name = Path(filepath).stem
@@ -20,28 +62,55 @@ def import_wordlist_to_database(db, filepath):
         # 读取并处理文件
         words = []
         total_lines = 0
-        skipped_items = 0
+        
+        skipped_lines = {
+            'empty': [],
+            'title': [],
+            'invalid': [],
+            'format_error': [],
+            'already_tagged': [],  # 已有该标签的词（包含行号信息）
+            'db_error': [],        # 数据库错误
+            'other_error': []      # 其他错误
+        }
         
         with open(filepath, 'r', encoding='utf-8') as file:
             content = file.read()
             file_size = len(content.encode('utf-8'))
             char_count = len(content)
             
-            # 重置文件指针
             file.seek(0)
-            
-            for line in file:
+            for line_num, line in enumerate(file, 1):
                 total_lines += 1
-                word = line.strip().split()[0].lower()  # 获取第一列并转小写
+                line = line.strip()
                 
-                if not word or not word.isalpha():  # 跳过空行和非字母
-                    skipped_items += 1
+                if not line:
+                    skipped_lines['empty'].append(line_num)
                     continue
                     
-                words.append(word)
+                if "Word List" in line:
+                    skipped_lines['title'].append((line_num, line))
+                    continue
+                
+                try:
+                    parts = line.split()
+                    if not parts:
+                        skipped_lines['empty'].append(line_num)
+                        continue
+                        
+                    word = clean_word(parts[0].lower())
+                    
+                    if not word or not word.isalpha():
+                        skipped_lines['invalid'].append((line_num, line))
+                        continue
+                    
+                    words.append((word, line_num))  # 保存单词和行号
+                    
+                except Exception as e:
+                    skipped_lines['format_error'].append((line_num, line, str(e)))
+                    continue
         
         if not words:
-            print("未找到有效单词")
+            print("未找到需要导入的有效单词")
             return False
             
         # 打印文件统计信息
@@ -49,93 +118,89 @@ def import_wordlist_to_database(db, filepath):
         print(f"文件大小: {file_size} bytes")
         print(f"总字符数: {char_count}")
         print(f"总行数: {total_lines}")
-        print(f"跳过行数: {skipped_items}")
-        print(f"有效单词数: {len(words)}")
+        print(f"需要处理的单词数: {len(words)}")
         print(f"将使用标签: {tag_name}")
         
         # 导入数据库
         with sqlite3.connect(db.db_path) as conn:
             conn.execute("BEGIN TRANSACTION")
             try:
-                # 先添加标签
                 tag_id = db.add_tag(tag_name)
-                
-                # 处理单词
                 added_count = 0
-                skipped_count = 0
-                existing_words = []  # 存储已存在的单词
-                already_tagged = []  # 存储已有标签的单词
-                word_ids = []  # 存储需要添加标签关联的单词ID
+                existing_words = []
+                word_lemma_pairs = []
                 
-                for word in words:
+                for word, line_num in words:
                     try:
-                        # 检查单词是否已存在
-                        word_info = db.get_word_info(word)  # 调用 get_word_info 函数获取单词信息
+                        word_info = db.get_word_info(word)
 
                         if word_info:
-                            # 如果单词存在，检查它是否已经有指定的标签
-                            existing_tags = [tag['name'] for tag in word_info['sources']]  # 获取已有的标签名称列表
-                            if tag_name in existing_tags:
-                                # 单词已存在且已有此标签
-                                already_tagged.append(word)
-                                skipped_count += 1
-                                continue
+                            # 检查单词是否已经有这个标签
+                            if tag_name in word_info['tags']:
+                                skipped_lines['already_tagged'].append((line_num, word))
                             else:
-                                # 单词存在但没有此标签
+                                # 单词存在但没有这个标签，添加标签关联
                                 existing_words.append(word)
-                                word_ids.append(word_info['lemma_id'])  # 从 word_info 中获取 lemma_id
-                                skipped_count += 1
-                                continue
-                            
-                        # 添加新单词
-                        word_id = db.add_word(word)
-                        word_ids.append(word_id)
-                        added_count += 1
+                                word_lemma_pairs.append((word_info['lemma_id'], tag_id))
+                        else:
+                            # 单词不存在，添加新单词并创建标签关联
+                            lemma_id = db.add_word(word)
+                            if lemma_id:
+                                word_lemma_pairs.append((lemma_id, tag_id))
+                                added_count += 1
+                            else:
+                                skipped_lines['db_error'].append((line_num, word, "无法获取或创建 lemma_id"))
                     
                     except Exception as e:
-                        print(f"跳过单词 '{word}': {str(e)}")
-                        skipped_count += 1
+                        error_msg = f"错误类型: {type(e).__name__}, 详细信息: {str(e)}"
+                        skipped_lines['db_error'].append((line_num, word, error_msg))
+                        continue
 
                 # 批量添加标签关联
-                if word_ids:
-                    conn.executemany('''
-                        INSERT OR IGNORE INTO lemma_tags (lemma_id, tag_id)
-                        VALUES (?, ?)
-                    ''', [(word_id, tag_id) for word_id in word_ids])
+                valid_pairs = [(lid, tid) for lid, tid in word_lemma_pairs if lid is not None]
+                if valid_pairs:
+                    try:
+                        conn.executemany('''
+                            INSERT OR IGNORE INTO lemma_tags (lemma_id, tag_id) 
+                            VALUES (?, ?)
+                        ''', valid_pairs)
+                    except sqlite3.Error as e:
+                        print(f"标签关联插入错误: {e}")
+                        raise
                 
                 conn.commit()
                 
-                # 显示导入结果
-                print(f"\n导入结果:")
-                print(f"成功添加: {added_count} 个单词")
-                print(f"跳过/失败: {skipped_count} 个单词")
+                # 保存导入统计信息
+                stats = {
+                    'added_count': added_count,
+                    'existing_count': len(existing_words),
+                    'file_size': file_size,
+                    'char_count': char_count,
+                    'total_lines': total_lines,
+                    'processed_words': len(words)
+                }
                 
-                # 显示已存在的单词
-                if existing_words:
-                    print(f"\n以下 {len(existing_words)} 个单词已存在(已添加新标签):")
-                    for word in existing_words:
-                        print(f"- {word}")
+                # 保存报告
+                report_file = f"{filepath}_import_report.txt"
+                save_import_report(report_file, stats, skipped_lines, existing_words)
                 
-                # 显示已有标签的单词
-                if already_tagged:
-                    print(f"\n以下 {len(already_tagged)} 个单词已存在且已有该标签:")
-                    for word in already_tagged:
-                        print(f"- {word}")
-                
-                # 显示数据库统计
-                lemmas = db.get_all_lemmas()
-                print(f"\n当前数据库共有 {len(lemmas)} 个词元")
+                print(f"\n导入完成:")
+                print(f"新增单词数: {added_count}")
+                print(f"已存在单词数: {len(existing_words)}")
+                print(f"导入报告已保存到: {report_file}")
                 
                 return True
                 
             except Exception as e:
                 conn.rollback()
                 print(f"导入过程出错: {e}")
+                traceback.print_exc()
                 return False
-                
+
     except FileNotFoundError:
         print(f"找不到文件: {filepath}")
         return False
     except Exception as e:
         print(f"发生错误: {e}")
+        traceback.print_exc()
         return False

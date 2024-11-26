@@ -130,23 +130,27 @@ class VocabularyDatabase:
                 return cursor.fetchone()[0]
           
     def add_word(self, word):
-        """添加单词及其所有相关形式到数据库"""
+        """添加单词及其所有相关形式到数据库，返回lemma_id"""
         word = word.lower().strip()
-        detailed_pos = self.get_detailed_pos(word)  # 获取详细词性标记
-        wordnet_pos = self.penn_to_wordnet_pos(detailed_pos)  # 映射到 WordNet 词性
+        detailed_pos = self.get_detailed_pos(word)  
+        wordnet_pos = self.penn_to_wordnet_pos(detailed_pos)  
         lemma = self.lemmatizer.lemmatize(word, wordnet_pos if wordnet_pos else wordnet.NOUN)
         
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
-            # 插入词元
+            # 首先确保我们能获得正确的lemma_id
             try:
                 cursor.execute('INSERT INTO lemmas (lemma) VALUES (?)', (lemma,))
                 lemma_id = cursor.lastrowid
             except sqlite3.IntegrityError:
                 cursor.execute('SELECT id FROM lemmas WHERE lemma = ?', (lemma,))
-                lemma_id = cursor.fetchone()[0]
-            
+                result = cursor.fetchone()
+                lemma_id = result[0] if result else None
+                
+            if lemma_id is None:
+                raise ValueError(f"Failed to get lemma_id for word: {word}")
+                
             # 收集并存储所有相关信息
             forms = set([lemma])  # 基本形式
             pos_set = set()
@@ -161,32 +165,26 @@ class VocabularyDatabase:
             
             # 使用 pattern 获取词形变化
             if 'v' in pos_set:  # 动词
-                forms.add(conjugate(lemma, INFINITIVE))  # 原形
-                forms.add(conjugate(lemma, PRESENT, 3))  # 第三人称单数
-                forms.add(conjugate(lemma, PRESENT + 'PARTICIPLE'))  # 现在分词
-                forms.add(conjugate(lemma, PAST))  # 过去式
-                forms.add(conjugate(lemma, PARTICIPLE))  # 过去分词
+                forms.add(conjugate(lemma, INFINITIVE))
+                forms.add(conjugate(lemma, PRESENT, 3))
+                forms.add(conjugate(lemma, PRESENT + 'PARTICIPLE'))
+                forms.add(conjugate(lemma, PAST))
+                forms.add(conjugate(lemma, PARTICIPLE))
                 
             if 'n' in pos_set:  # 名词
-                # 处理单复数
                 singular = singularize(lemma)
                 plural = pluralize(lemma)
                 forms.add(singular)
                 forms.add(plural)
-                
-                # 处理所有格形式
-                forms.add(singular + "'s")  # 单数所有格
+                forms.add(singular + "'s")
                 if plural.endswith('s'):
-                    forms.add(plural + "'")  # 复数所有格
+                    forms.add(plural + "'")
                 else:
                     forms.add(plural + "'s")
                     
             if 'a' in pos_set or 'j' in pos_set:  # 形容词
-                # 处理比较级和最高级
-                forms.add(comparative(lemma))  # 比较级
-                forms.add(superlative(lemma))  # 最高级
-                
-                # 处理形容词变副词
+                forms.add(comparative(lemma))
+                forms.add(superlative(lemma))
                 if lemma.endswith('y'):
                     forms.add(lemma[:-1] + 'ily')
                 elif lemma.endswith('le'):
@@ -195,20 +193,20 @@ class VocabularyDatabase:
                     forms.add(lemma + 'ly')
                     
             if 'r' in pos_set:  # 副词
-                # 一些副词也有比较级和最高级
                 try:
                     forms.add(comparative(lemma))
                     forms.add(superlative(lemma))
                 except:
-                    pass  # 有些副词没有比较级和最高级形式
+                    pass
             
             # 移除空字符串或 None 值
             forms = {f for f in forms if f and isinstance(f, str)}
             
             # 存储详细词性和 WordNet 词性
             try:
-                cursor.execute('INSERT INTO pos (lemma_id, detailed_pos, wordnet_pos) VALUES (?, ?, ?)',
-                               (lemma_id, detailed_pos, wordnet_pos if wordnet_pos else None))
+                cursor.execute('''INSERT INTO pos (lemma_id, detailed_pos, wordnet_pos) 
+                                VALUES (?, ?, ?)''',
+                                (lemma_id, detailed_pos, wordnet_pos if wordnet_pos else None))
             except sqlite3.IntegrityError:
                 pass
             
@@ -229,6 +227,29 @@ class VocabularyDatabase:
                     pass
             
             conn.commit()
+            return lemma_id  # 确保返回lemma_id
+    
+    def get_all_tags(self):
+        """获取所有标签及其包含的单词数量"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # 查询所有标签及其关联的单词数量
+                cursor.execute('''
+                    SELECT t.name, COUNT(DISTINCT lt.lemma_id) as word_count
+                    FROM tags t
+                    LEFT JOIN lemma_tags lt ON t.id = lt.tag_id
+                    GROUP BY t.name
+                    ORDER BY t.name
+                ''')
+                
+                results = cursor.fetchall()
+                return {tag: count for tag, count in results}
+                
+        except sqlite3.Error as e:
+            print(f"数据库查询出错: {e}")
+            return {}
 
     def get_all_lemmas(self):
         """获取数据库中的所有lemmas"""
@@ -272,11 +293,22 @@ class VocabularyDatabase:
             cursor.execute('SELECT derivative FROM derivatives WHERE lemma_id = ?', (lemma_id,))
             derivatives = [row[0] for row in cursor.fetchall()]
             
+            # 获取标签
+            cursor.execute('''
+                SELECT tags.name 
+                FROM tags 
+                JOIN lemma_tags ON tags.id = lemma_tags.tag_id 
+                WHERE lemma_tags.lemma_id = ?
+            ''', (lemma_id,))
+            tags = [row[0] for row in cursor.fetchall()]
+            
             return {
                 'lemma': lemma,
+                'lemma_id': lemma_id,  # 添加 lemma_id
                 'pos': pos_list,
                 'forms': forms,
                 'derivatives': derivatives,
+                'tags': tags  # 添加标签列表
             }
 
     def get_words_by_tag(self, tag_name):
