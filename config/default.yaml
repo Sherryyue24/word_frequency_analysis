@@ -1,0 +1,72 @@
+# 默认配置文件
+# 作者: Sherryyue
+# 路径: config/default.yaml
+
+# 应用基本配置
+app:
+  name: "Word Frequency Analysis"
+  version: "1.0.0"
+  description: "词频分析和词汇管理系统"
+
+# 数据库配置
+database:
+  type: "sqlite"
+  path: "data/databases/"
+  vocabulary_db: "vocabulary.db"
+  analysis_db: "analysis.db"
+  cache_enabled: true
+  backup_enabled: true
+
+# 文件处理配置
+file_processing:
+  supported_formats:
+    - ".txt"
+    - ".pdf"
+    - ".docx"
+    - ".csv"
+  max_file_size: 50  # MB
+  encoding_detection: true
+  batch_size: 100
+  cache_results: true
+
+# 文本分析配置
+analysis:
+  min_word_length: 1
+  min_frequency_threshold: 1
+  enable_lemmatization: true
+  enable_pos_tagging: true
+  enable_derivatives: true
+  language: "en"
+
+# 导出配置
+export:
+  default_format: "txt"
+  output_directory: "data/exports/"
+  supported_formats:
+    - "txt"
+    - "csv" 
+    - "json"
+    - "excel"
+
+# 可视化配置
+visualization:
+  default_chart_type: "bar"
+  max_items_display: 20
+  save_charts: true
+  chart_directory: "data/exports/charts/"
+
+# 日志配置
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file_enabled: true
+  file_path: "logs/app.log"
+  max_file_size: 10  # MB
+  backup_count: 5
+
+# CLI配置
+cli:
+  page_size: 10
+  max_display_items: 20
+  enable_colors: true
+  enable_progress_bar: true 

@@ -1,7 +1,7 @@
 from collections import Counter
 from pathlib import Path
 from typing import Dict, Tuple
-from .file_reader import TextReader
+from ..input.file_reader import TextReader
 
 def analyze_text(text: str, reader: TextReader) -> Tuple[Dict, Dict]:
     """分析文本内容"""

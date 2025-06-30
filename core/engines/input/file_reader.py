@@ -115,7 +115,7 @@ class TextReader:
         return text
 
     def get_word_list(self, text: Optional[str] = None, 
-                      min_length: int = 1) -> List[str]:
+                      min_length: int = 2) -> List[str]:
         """
         将文本转换为词列表
         
@@ -124,18 +124,63 @@ class TextReader:
             min_length: 最小词长度
             
         Returns:
-            List[str]: 词列表
+            List[str]: 词列表（仅包含有效的词汇）
         """
         if text is None:
             text = self.current_text
             
-        # 使用正则表达式分词
-        words = re.findall(r'\b\w+\b', text.lower())
+        # 使用改进的正则表达式分词，保留撇号和连字符
+        words = re.findall(r'\b\w+(?:[-\']\w+)*\b', text.lower())
         
-        # 过滤短词
-        words = [word for word in words if len(word) >= min_length]
+        # 严格的词汇验证和过滤
+        valid_words = []
+        for word in words:
+            if self._is_valid_word(word, min_length):
+                valid_words.append(word)
         
-        return words
+        return valid_words
+    
+    def _is_valid_word(self, word: str, min_length: int = 2) -> bool:
+        """
+        检查词汇是否有效
+        
+        Args:
+            word: 要检查的词汇
+            min_length: 最小长度要求
+            
+        Returns:
+            bool: 是否为有效词汇
+        """
+        # 基本长度检查（允许重要的单字符词）
+        if len(word) < min_length and word.lower() not in ['i', 'a']:
+            return False
+        
+        # 跳过过长的词汇（可能是错误数据）
+        if len(word) > 30:
+            return False
+            
+        # 跳过纯数字词汇
+        if word.isdigit():
+            return False
+            
+        # 跳过任何包含数字的词汇
+        if any(c.isdigit() for c in word):
+            return False
+        
+        # 验证字符：允许字母、连字符、撇号
+        allowed_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-'")
+        if not all(c in allowed_chars for c in word):
+            return False
+        
+        # 确保至少包含一个字母
+        if not any(c.isalpha() for c in word):
+            return False
+            
+        # 跳过常见的无意义词汇模式
+        if word in ['www', 'http', 'https', 'com', 'org', 'edu']:
+            return False
+            
+        return True
 
     def get_metadata(self) -> Dict:
         """

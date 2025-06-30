@@ -1,0 +1,38 @@
+# 开发环境配置
+# 路径: config/development.yaml
+# 项目名称: Word Frequency Analysis
+# 作者: Sherryyue
+
+# 继承默认配置
+extends: "default.yaml"
+
+# 开发环境特定配置
+app:
+  debug: true
+  environment: "development"
+
+# 数据库配置 - 开发环境
+database:
+  path: "data/databases/dev/"
+  backup_enabled: false
+  
+# 日志配置 - 开发环境
+logging:
+  level: "DEBUG"
+  console_enabled: true
+  file_enabled: true
+
+# 文件处理 - 开发环境
+file_processing:
+  max_file_size: 10  # MB - 较小以便测试
+  cache_results: false  # 开发时不缓存，便于测试
+
+# 性能配置 - 开发环境  
+performance:
+  enable_profiling: true
+  enable_memory_monitoring: true
+
+# 测试配置
+testing:
+  test_data_path: "tests/test_data/"
+  mock_external_services: true 

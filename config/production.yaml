@@ -1,0 +1,57 @@
+# 生产环境配置
+# 路径: config/production.yaml  
+# 项目名称: Word Frequency Analysis
+# 作者: Sherryyue
+
+# 继承默认配置
+extends: "default.yaml"
+
+# 生产环境特定配置
+app:
+  debug: false
+  environment: "production"
+
+# 数据库配置 - 生产环境
+database:
+  type: "postgresql"  # 生产环境使用PostgreSQL
+  host: "${DB_HOST}"
+  port: "${DB_PORT}"
+  username: "${DB_USER}"
+  password: "${DB_PASSWORD}"
+  database: "${DB_NAME}"
+  backup_enabled: true
+  backup_schedule: "0 2 * * *"  # 每天凌晨2点备份
+
+# 文件处理 - 生产环境
+file_processing:
+  max_file_size: 100  # MB
+  cache_results: true
+  virus_scan_enabled: true
+
+# 安全配置
+security:
+  enable_rate_limiting: true
+  max_requests_per_minute: 60
+  enable_file_validation: true
+  allowed_file_types: [".txt", ".pdf", ".docx", ".csv"]
+
+# 性能配置 - 生产环境
+performance:
+  enable_caching: true
+  cache_ttl: 3600  # 1小时
+  enable_compression: true
+  max_concurrent_processes: 4
+
+# 监控配置
+monitoring:
+  enable_metrics: true
+  metrics_endpoint: "/metrics"
+  health_check_endpoint: "/health"
+  
+# 日志配置 - 生产环境
+logging:
+  level: "WARNING"
+  console_enabled: false
+  file_enabled: true
+  remote_logging_enabled: true
+  log_aggregator: "${LOG_AGGREGATOR_URL}" 
