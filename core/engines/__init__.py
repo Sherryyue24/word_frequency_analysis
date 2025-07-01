@@ -1,66 +1,63 @@
-# Engines模块初始化
+# 核心引擎模块 - 最新架构版本
 # 路径: core/engines/__init__.py
 # 项目名称: Word Frequency Analysis
 # 作者: Sherryyue
 
 """
-Engines 模块 - 核心处理引擎
+核心引擎模块 - 最新架构
 
-重新组织为三个功能模块：
-- input: 输入处理模块（文件处理、词汇表导入）
-- vocabulary: 词汇处理模块（词汇分析、处理）
-- database: 数据库模块（数据存储、检索）
+分层设计：
+- database: 数据库层（统一数据库、字典管理、语言学分析）
+- input: 输入处理层（文件处理、词汇表导入）
+- vocabulary: 词汇处理层（词汇分析、学习状态管理）
+
+核心特性：
+- 多词性字典系统
+- 精确的dictionary_id关联
+- 个人学习状态追踪
+- 完整的语言学分析
+- 统一的数据架构
 """
 
-# 导入三大功能模块
-from . import input
-from . import vocabulary 
-from . import database
+# 导入核心组件
+from .database import UnifiedDatabase, UnifiedDatabaseAdapter, unified_adapter, DictionaryManager
+from .input import FileProcessor, TextReader, import_wordlist_from_file, PersonalWordlistImporter  
+from .vocabulary import WordAnalyzer, PersonalStatusManager
 
-# 为了向后兼容，直接导出常用组件
-from .input.file_processor import TextProcessor, FileProcessor
-from .input.file_reader import TextReader
-from .input.modern_wordlist_import import (
-    import_wordlist_from_file,
-    import_multiple_wordlists
-)
-
+# 向后兼容的导出
+from .input.file_processor import *
 from .vocabulary.word_analyzer import analyze_text
+from .database.database_adapter import unified_adapter
 
-from .database.unified_database import UnifiedDatabase
-from .database.database_adapter import UnifiedDatabaseAdapter, unified_adapter
-
-# 向后兼容的别名（使用统一适配器）
-StorageManager = lambda: unified_adapter
-VocabularyDatabase = lambda: unified_adapter
-
-# 模块版本和信息
-__version__ = "1.0.0"
-__author__ = "Sherryyue"
-
-# 公开的API接口
 __all__ = [
-    # 功能模块
-    'input',
-    'vocabulary', 
-    'database',
-    
-    # 新统一架构
+    # 数据库层
     'UnifiedDatabase',
-    'unified_adapter', 
-    'UnifiedDatabaseAdapter',
+    'UnifiedDatabaseAdapter', 
+    'unified_adapter',
+    'DictionaryManager',
     
-    # 核心处理器
-    'TextProcessor',
-    'FileProcessor', 
+    # 输入处理层
+    'FileProcessor',
     'TextReader',
-    'analyze_text',
-    
-    # 词汇表导入
     'import_wordlist_from_file',
-    'import_multiple_wordlists',
+    'PersonalWordlistImporter',
     
-    # 向后兼容别名
-    'StorageManager',
-    'VocabularyDatabase',
+    # 词汇处理层
+    'WordAnalyzer',
+    'PersonalStatusManager',
+    
+    # 向后兼容
+    'analyze_text'
+]
+
+# 架构信息
+__version__ = '2.0.0'
+__architecture__ = 'unified_multipos_dictionary'
+__features__ = [
+    'multipos_dictionary',
+    'dictionary_id_mapping', 
+    'personal_status_tracking',
+    'linguistic_analysis',
+    'vocabulary_coverage',
+    'difficulty_analysis'
 ]

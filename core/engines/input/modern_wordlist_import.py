@@ -459,12 +459,23 @@ def _import_words_with_tracking(tag_name: str, words_with_lines: List[Tuple[str,
     try:
         import_result = unified_adapter.add_words_to_wordlist(tag_name, words_only)
         
-        # 检查是否有验证失败的词汇
+        # 检查是否有字典匹配失败的词汇
         failed_words = []
-        if 'invalid_words' in import_result:
-            for word, error in import_result['invalid_words']:
-                line_num = word_to_line.get(word, 0)
-                failed_words.append((word, line_num, error))
+        if 'dictionary_unmatched' in import_result and import_result['dictionary_unmatched'] > 0:
+            # 字典未匹配的词汇被视为失败
+            for word in words_only:
+                if word not in word_to_line:
+                    continue
+                # 这里我们需要实际检查哪些词汇未匹配，暂时标记所有未匹配的
+                try:
+                    from ..database.dictionary_manager import DictionaryManager
+                    manager = DictionaryManager()
+                    query_results = manager.query_word(word)
+                    if not query_results:  # 空列表表示未找到
+                        line_num = word_to_line.get(word, 0)
+                        failed_words.append((word, line_num, "字典中未找到匹配"))
+                except:
+                    pass
         
         if import_result.get('success', False):
             # 导入成功（可能是部分成功）

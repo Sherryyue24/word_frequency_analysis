@@ -315,53 +315,65 @@ class UnifiedDatabase:
         return word_ids
     
     def add_or_get_word_detailed(self, surface_form: str, context_text: str = None) -> str:
-        """添加或获取词汇，为每个原始形式创建独立记录，包含语言学分析"""
-        normalized = self._normalize_word(surface_form)
-        lemma = self._get_word_lemma(normalized)
+        """添加或获取词汇（包含完整的语言学分析和字典匹配）"""
+        
+        # 改进的词根处理逻辑
+        lemma = self._get_word_lemma(surface_form)
+        normalized_form = self._normalize_word(surface_form)
         
         with sqlite3.connect(self.db_path) as conn:
-            # 检查是否已存在完全相同的surface_form
+            # 首先尝试基于lemma查找（主要去重逻辑）
             cursor = conn.execute("""
-                SELECT id FROM words WHERE surface_form = ? AND lemma = ?
-            """, (surface_form, lemma))
+                SELECT id FROM words WHERE lemma = ?
+            """, (lemma,))
             
-            existing = cursor.fetchone()
-            if existing:
-                return existing[0]
+            row = cursor.fetchone()
+            if row:
+                # 找到相同词根的词汇，更新surface_form（如果更标准）
+                word_id = row[0]
+                self._update_word_surface_form(conn, word_id, surface_form, lemma)
+                return word_id
             
-            # 进行语言学分析
+            # 创建新词汇记录，包含语言学分析和字典匹配
+            word_id = self._generate_uuid()
+            
+            # 语言学分析
             linguistic_features = self._analyze_linguistic_features(surface_form, context_text)
             
-            # 创建新的词汇记录
-            word_id = self._generate_uuid()
+            # 字典匹配
+            dict_match = self._match_dictionary_word(surface_form, lemma)
+            
+            # 插入新词汇
             conn.execute("""
-                INSERT INTO words (id, surface_form, lemma, normalized_form, linguistic_features)
-                VALUES (?, ?, ?, ?, ?)
-            """, (word_id, surface_form, lemma, normalized, 
-                  json.dumps(linguistic_features) if linguistic_features else None))
+                INSERT INTO words 
+                (id, surface_form, lemma, normalized_form, linguistic_features,
+                 dictionary_id, dictionary_found, dictionary_rank, difficulty_level)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (word_id, surface_form, lemma, normalized_form,
+                  json.dumps(linguistic_features) if linguistic_features else None,
+                  dict_match['dictionary_id'],
+                  dict_match['dictionary_found'],
+                  dict_match['dictionary_rank'],
+                  dict_match['difficulty_level']))
             
             return word_id
     
-    def _analyze_linguistic_features(self, word: str, context_text: str = None) -> dict:
+    def _analyze_linguistic_features(self, word: str, context_words: List[str] = None) -> dict:
         """分析词汇的语言学特征"""
         try:
             from .linguistic_analyzer import linguistic_analyzer
             
             # 如果有上下文，提取相关词汇作为上下文
-            context_words = None
-            if context_text:
-                # 简单的上下文提取 - 可以根据需要优化
-                import re
-                words_in_context = re.findall(r'\b\w+\b', context_text.lower())
+            if context_words:
                 # 找到目标词汇周围的词汇
                 try:
-                    word_index = words_in_context.index(word.lower())
+                    word_index = context_words.index(word.lower())
                     start = max(0, word_index - 3)
-                    end = min(len(words_in_context), word_index + 4)
-                    context_words = words_in_context[start:end]
+                    end = min(len(context_words), word_index + 4)
+                    context_words = context_words[start:end]
                 except ValueError:
                     # 词汇不在上下文中，使用整个上下文的前几个词
-                    context_words = words_in_context[:7]
+                    context_words = context_words[:7]
             
             features = linguistic_analyzer.analyze_word(word, context_words)
             return features
@@ -372,6 +384,52 @@ class UnifiedDatabase:
         except Exception as e:
             print(f"⚠️  语言学分析失败 {word}: {e}")
             return {}
+    
+    def _match_dictionary_word(self, surface_form: str, lemma: str) -> Dict:
+        """匹配字典词汇 - 最新版本使用dictionary_id"""
+        try:
+            from .dictionary_manager import DictionaryManager
+            manager = DictionaryManager(self.db_path)
+            
+            # 优先尝试查询lemma
+            dict_results = manager.query_word(lemma)
+            if dict_results:
+                # 取最佳匹配结果（通常是词频最高的）
+                dict_info = dict_results[0]
+                return {
+                    'dictionary_id': dict_info['id'],       # 使用UUID而非lemma字符串
+                    'dictionary_found': True,
+                    'dictionary_rank': dict_info['frequency_rank'],
+                    'difficulty_level': dict_info['difficulty_level']
+                }
+            
+            # 如果lemma没找到，尝试surface_form
+            dict_results = manager.query_word(surface_form)
+            if dict_results:
+                dict_info = dict_results[0]
+                return {
+                    'dictionary_id': dict_info['id'],       # 使用UUID而非lemma字符串
+                    'dictionary_found': True,
+                    'dictionary_rank': dict_info['frequency_rank'],
+                    'difficulty_level': dict_info['difficulty_level']
+                }
+            
+            # 没有找到匹配
+            return {
+                'dictionary_id': None,
+                'dictionary_found': False,
+                'dictionary_rank': None,
+                'difficulty_level': None
+            }
+            
+        except Exception as e:
+            print(f"⚠️  字典匹配失败 {surface_form}: {e}")
+            return {
+                'dictionary_id': None,
+                'dictionary_found': False,
+                'dictionary_rank': None,
+                'difficulty_level': None
+            }
     
     # =================== 语言学特征查询 ===================
     
@@ -672,77 +730,64 @@ class UnifiedDatabase:
     
     def add_words_to_wordlist(self, wordlist_id: str, words: List[str], 
                             confidence: float = 1.0) -> Dict[str, int]:
-        """将词汇批量添加到词汇表，返回详细统计"""
-        word_ids = self.batch_add_words(words)
+        """将词汇添加到词汇表 - 通过字典ID关联"""
+        stats = {
+            'total_words': len(words),
+            'dictionary_matched': 0,
+            'added_to_wordlist': 0,
+            'already_exists': 0,
+            'not_found_in_dictionary': 0
+        }
         
         with sqlite3.connect(self.db_path) as conn:
-            # 检查现有关联
-            existing_memberships = set()
-            if word_ids:
-                placeholders = ','.join(['?' for _ in word_ids.values()])
-                cursor = conn.execute(f"""
-                    SELECT word_id FROM word_wordlist_memberships 
-                    WHERE wordlist_id = ? AND word_id IN ({placeholders})
-                """, [wordlist_id] + list(word_ids.values()))
-                existing_memberships = {row[0] for row in cursor.fetchall()}
+            from .dictionary_manager import DictionaryManager
+            manager = DictionaryManager(self.db_path)
             
-            # 准备插入数据 - 去重word_ids
-            unique_word_ids = list(set(word_ids.values()))
-            membership_data = []
-            new_associations = 0
-            existing_associations = 0
-            
-            for word_id in unique_word_ids:
-                if word_id in existing_memberships:
-                    existing_associations += 1
+            for word in words:
+                # 查找字典中的匹配词汇
+                dict_results = manager.query_word(word.strip().lower())
+                
+                if dict_results:
+                    # 找到字典匹配
+                    stats['dictionary_matched'] += 1
+                    
+                    # 对每个匹配的字典条目都添加到词汇表
+                    for dict_info in dict_results:
+                        dictionary_id = dict_info['id']
+                        
+                        # 检查是否已存在关联
+                        existing = conn.execute("""
+                            SELECT 1 FROM dictionary_wordlist_memberships
+                            WHERE dictionary_id = ? AND wordlist_id = ?
+                        """, (dictionary_id, wordlist_id)).fetchone()
+                        
+                        if existing:
+                            stats['already_exists'] += 1
+                        else:
+                            # 添加新关联
+                            conn.execute("""
+                                INSERT INTO dictionary_wordlist_memberships
+                                (dictionary_id, wordlist_id, confidence, source_metadata)
+                                VALUES (?, ?, ?, ?)
+                            """, (dictionary_id, wordlist_id, confidence, 
+                                 json.dumps({'original_word': word, 'matched_word': dict_info['word']})))
+                            stats['added_to_wordlist'] += 1
                 else:
-                    membership_data.append((word_id, wordlist_id, confidence))
-                    new_associations += 1
+                    # 没有找到字典匹配
+                    stats['not_found_in_dictionary'] += 1
+                    print(f"⚠️  词汇 '{word}' 未在字典中找到")
             
-            # 插入新关联
-            if membership_data:
-                conn.executemany("""
-                    INSERT INTO word_wordlist_memberships 
-                    (word_id, wordlist_id, confidence)
-                    VALUES (?, ?, ?)
-                """, membership_data)
-            
-            # 更新词汇表的词汇数量
+            # 更新词汇表计数
             conn.execute("""
                 UPDATE wordlists 
                 SET word_count = (
-                    SELECT COUNT(*) FROM word_wordlist_memberships 
+                    SELECT COUNT(*) FROM dictionary_wordlist_memberships 
                     WHERE wordlist_id = ?
                 )
                 WHERE id = ?
             """, (wordlist_id, wordlist_id))
         
-        print(f"✅ 添加了 {new_associations} 个词汇到词汇表")
-        if existing_associations > 0:
-            print(f"📋 跳过了 {existing_associations} 个已存在的词汇")
-        
-        # 计算基于原始词汇的统计
-        total_input_words = len(words)
-        unique_word_count = len(unique_word_ids)
-        
-        # 由于词汇去重合并，需要调整统计方式
-        # 如果有词汇合并，existing_associations应该按比例调整
-        if unique_word_count < total_input_words:
-            # 有词汇被合并了，按比例分配
-            ratio = total_input_words / unique_word_count if unique_word_count > 0 else 1
-            adjusted_new = int(new_associations * ratio)
-            adjusted_existing = total_input_words - adjusted_new
-        else:
-            adjusted_new = new_associations
-            adjusted_existing = existing_associations
-        
-        return {
-            'total_words': total_input_words,
-            'new_associations': adjusted_new,
-            'existing_associations': adjusted_existing,
-            'unique_word_ids': unique_word_count,
-            'success': True
-        }
+        return stats
     
     def get_wordlist_by_name(self, name: str) -> Optional[Dict]:
         """根据名称获取词汇表"""
@@ -760,16 +805,45 @@ class UnifiedDatabase:
     # =================== 分析查询 ===================
     
     def get_vocabulary_coverage(self, doc_id: str) -> List[Dict]:
-        """获取文档的词汇覆盖度分析"""
+        """获取文档的词汇表覆盖度分析 - 使用dictionary_id关联"""
         with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
             cursor = conn.execute("""
-                SELECT * FROM document_vocabulary_coverage 
-                WHERE document_id = ?
+                SELECT 
+                    wl.name as wordlist_name,
+                    wl.description,
+                    COUNT(DISTINCT w.id) as covered_words,
+                    wl.word_count as total_wordlist_words,
+                    SUM(o.frequency) as total_frequency,
+                    AVG(o.tf_score) as avg_tf_score,
+                    AVG(w.dictionary_rank) as avg_word_rank,
+                    AVG(w.difficulty_level) as avg_difficulty
+                FROM wordlists wl
+                JOIN dictionary_wordlist_memberships m ON wl.id = m.wordlist_id
+                JOIN words w ON m.dictionary_id = w.dictionary_id
+                JOIN occurrences o ON w.id = o.word_id
+                WHERE o.document_id = ? AND w.dictionary_found = TRUE
+                GROUP BY wl.id
                 ORDER BY covered_words DESC
             """, (doc_id,))
             
-            return [dict(row) for row in cursor.fetchall()]
+            results = []
+            for row in cursor.fetchall():
+                name, desc, covered, total, freq, tf_score, avg_rank, avg_diff = row
+                coverage_rate = (covered / total * 100) if total > 0 else 0
+                
+                results.append({
+                    'wordlist_name': name,
+                    'description': desc,
+                    'covered_words': covered,
+                    'total_wordlist_words': total,
+                    'coverage_percentage': round(coverage_rate, 2),
+                    'total_frequency': freq,
+                    'avg_tf_score': round(tf_score, 4) if tf_score else 0,
+                    'avg_word_rank': round(avg_rank, 1) if avg_rank else None,
+                    'avg_difficulty_level': round(avg_diff, 1) if avg_diff else None
+                })
+            
+            return results
     
     def get_word_usage_stats(self, min_frequency: int = 1) -> List[Dict]:
         """获取词汇使用统计"""
@@ -854,23 +928,49 @@ class UnifiedDatabase:
         with sqlite3.connect(self.db_path) as conn:
             stats = {}
             
-            # 基本计数
-            tables = ['documents', 'words', 'wordlists', 'occurrences', 'word_wordlist_memberships']
+            # 核心表统计
+            tables = [
+                'documents', 'common_dictionary', 'words', 'wordlists',
+                'occurrences', 'dictionary_wordlist_memberships', 'analysis_results'
+            ]
+            
             for table in tables:
-                cursor = conn.execute(f"SELECT COUNT(*) FROM {table}")
-                stats[f'{table}_count'] = cursor.fetchone()[0]
+                try:
+                    cursor = conn.execute(f"SELECT COUNT(*) FROM {table}")
+                    count = cursor.fetchone()[0]
+                    stats[f'{table}_count'] = count
+                except sqlite3.OperationalError:
+                    # 表不存在
+                    stats[f'{table}_count'] = 0
             
-            # 按状态统计文档
-            cursor = conn.execute("""
-                SELECT status, COUNT(*) FROM documents GROUP BY status
-            """)
-            stats['documents_by_status'] = dict(cursor.fetchall())
+            # 重命名以保持向后兼容
+            stats['words_count'] = stats.get('words_count', 0)
+            stats['documents_count'] = stats.get('documents_count', 0)
+            stats['wordlists_count'] = stats.get('wordlists_count', 0)
+            stats['occurrences_count'] = stats.get('occurrences_count', 0)
+            stats['dictionary_count'] = stats.get('common_dictionary_count', 0)
             
-            # 按类型统计文档
-            cursor = conn.execute("""
-                SELECT document_type, COUNT(*) FROM documents GROUP BY document_type  
-            """)
-            stats['documents_by_type'] = dict(cursor.fetchall())
+            # 字典匹配统计
+            try:
+                cursor = conn.execute("""
+                    SELECT COUNT(*) FROM words WHERE dictionary_found = TRUE
+                """)
+                stats['dictionary_matched_words'] = cursor.fetchone()[0]
+            except sqlite3.OperationalError:
+                stats['dictionary_matched_words'] = 0
+            
+            # 个人学习状态统计
+            try:
+                cursor = conn.execute("""
+                    SELECT personal_status, COUNT(*) 
+                    FROM words 
+                    WHERE personal_status IS NOT NULL
+                    GROUP BY personal_status
+                """)
+                status_stats = dict(cursor.fetchall())
+                stats['personal_status'] = status_stats
+            except sqlite3.OperationalError:
+                stats['personal_status'] = {}
             
             return stats
     
